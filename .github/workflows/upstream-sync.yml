@@ -16,8 +16,14 @@ on:
 
 # 推回 main 要写权限。若仓库 Settings → Actions → General 的 Workflow permissions
 # 设成了 Read repository contents，这里申请不到写权限，推送会 403。
+# workflows: write 是给「推送的提交里含 .github/workflows/ 下的文件」用的：上游每改一次
+# 自己的 ci.yml / release.yml，合并后都要写这些路径，缺这一项会被拒：
+#   refusing to allow a GitHub App to create or update workflow ... without `workflows` permission
+# 注意：只要写了 permissions 块，没列出的 scope 一律变 none，所以不能只写 contents ——
+# 仓库设置里的 Read and write 只是上限，压不住这里的显式收窄。
 permissions:
   contents: write
+  workflows: write
 
 # 定时和手动可能撞在一起，排队跑，不要并发合并
 concurrency:
