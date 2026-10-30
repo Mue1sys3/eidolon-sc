@@ -1,0 +1,60 @@
+# 每天把上游 Sallyn0225/eidolon-sc 的 main 合进本仓库 main。
+# 除本文件外，其他路径都跟上游走：上游改了自己的 ci.yml、dependabot.yml、PR 模板也一并进来。
+# 本文件上游没有，而 git merge 不会删除只存在于本仓库的文件，所以同步碰不到它 —— 这就是
+# 「排除我仓库的 workflow」的实现方式，不需要额外的路径过滤。
+# 用 GITHUB_TOKEN 推的提交不触发 main 上的推送事件（见 ci.yml 第一行注释），这里正好是有意的：
+# ci.yml 的 publish 任务会在 push main 时把镜像推到 GHCR，fork 里每天跑一遍没有意义。
+name: Sync upstream
+
+on:
+  schedule:
+    # GitHub 的 cron 按 UTC 算：00:00 UTC = 北京时间 08:00。
+    # 整点是调度最拥挤的时段，实际启动常比设定晚 5～30 分钟。
+    - cron: "0 0 * * *"
+  # 想立刻验证或补一次同步时，在 Actions 页面手动触发
+  workflow_dispatch:
+
+# 推回 main 要写权限。若仓库 Settings → Actions → General 的 Workflow permissions
+# 设成了 Read repository contents，这里申请不到写权限，推送会 403。
+permissions:
+  contents: write
+
+# 定时和手动可能撞在一起，排队跑，不要并发合并
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          # 合并要找共同祖先，浅克隆会让 git merge 认不出两边的关系
+          fetch-depth: 0
+          # 检出时留下的凭据就是后面 push 用的 GITHUB_TOKEN
+          persist-credentials: true
+
+      - name: 拉取上游 main
+        run: |
+          git remote add upstream https://github.com/Sallyn0225/eidolon-sc.git
+          git fetch --prune upstream "+refs/heads/main:refs/remotes/upstream/main"
+
+      - name: 合并上游
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "本地 $(git rev-parse --short HEAD) → 上游 $(git rev-parse --short upstream/main)"
+          if ! git merge -m "chore: 同步上游 $(git rev-parse --short upstream/main)" upstream/main; then
+            echo "::error::与上游冲突，已中止合并，需要人工处理。冲突文件："
+            git diff --name-only --diff-filter=U
+            git merge --abort
+            exit 1
+          fi
+          # 兜底：本文件若被删掉，后续同步就停了，宁可这次失败
+          test -f .github/workflows/upstream-sync.yml || { echo "::error::upstream-sync.yml 不见了"; exit 1; }
+
+      - name: 推回 main
+        run: git push origin main
