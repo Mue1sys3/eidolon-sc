@@ -1,9 +1,11 @@
-# 每天把上游 Sallyn0225/eidolon-sc 的 main 合进本仓库 main。
-# 除本文件外，其他路径都跟上游走：上游改了自己的 ci.yml、dependabot.yml、PR 模板也一并进来。
-# 本文件上游没有，而 git merge 不会删除只存在于本仓库的文件，所以同步碰不到它 —— 这就是
-# 「排除我仓库的 workflow」的实现方式，不需要额外的路径过滤。
-# 用 GITHUB_TOKEN 推的提交不触发 main 上的推送事件（见 ci.yml 第一行注释），这里正好是有意的：
-# ci.yml 的 publish 任务会在 push main 时把镜像推到 GHCR，fork 里每天跑一遍没有意义。
+# 每天把上游 Sallyn0225/eidolon-sc 的 main 合进本仓库 main，但 .github/ 整个不跟着走。
+#
+# 为什么排除 .github：GITHUB_TOKEN 改不了 .github/workflows/ 下的文件。workflow 里的
+# permissions 只接受 actions / contents / issues / packages 等 19 个 scope，没有 workflows，
+# 所以动作 token 无论怎么声明都拿不到这个能力，推送会被拒：
+#   refusing to allow a GitHub App to create or update workflow ... without `workflows` permission
+# 要连上游的 ci.yml / release.yml 一起同步，只能改用 PAT（见文件末尾的说明）。
+# 附带好处：.github 不同步，上游的 dependabot.yml 也不会在你这个 fork 里开出 PR。
 name: Sync upstream
 
 on:
@@ -16,14 +18,8 @@ on:
 
 # 推回 main 要写权限。若仓库 Settings → Actions → General 的 Workflow permissions
 # 设成了 Read repository contents，这里申请不到写权限，推送会 403。
-# workflows: write 是给「推送的提交里含 .github/workflows/ 下的文件」用的：上游每改一次
-# 自己的 ci.yml / release.yml，合并后都要写这些路径，缺这一项会被拒：
-#   refusing to allow a GitHub App to create or update workflow ... without `workflows` permission
-# 注意：只要写了 permissions 块，没列出的 scope 一律变 none，所以不能只写 contents ——
-# 仓库设置里的 Read and write 只是上限，压不住这里的显式收窄。
 permissions:
   contents: write
-  workflows: write
 
 # 定时和手动可能撞在一起，排队跑，不要并发合并
 concurrency:
@@ -48,19 +44,73 @@ jobs:
           git remote add upstream https://github.com/Sallyn0225/eidolon-sc.git
           git fetch --prune upstream "+refs/heads/main:refs/remotes/upstream/main"
 
-      - name: 合并上游
+      - name: 合并上游（保留本仓库的 .github）
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           echo "本地 $(git rev-parse --short HEAD) → 上游 $(git rev-parse --short upstream/main)"
-          if ! git merge -m "chore: 同步上游 $(git rev-parse --short upstream/main)" upstream/main; then
-            echo "::error::与上游冲突，已中止合并，需要人工处理。冲突文件："
-            git diff --name-only --diff-filter=U
-            git merge --abort
-            exit 1
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "已含上游全部提交，无需同步"
+            exit 0
           fi
-          # 兜底：本文件若被删掉，后续同步就停了，宁可这次失败
-          test -f .github/workflows/upstream-sync.yml || { echo "::error::upstream-sync.yml 不见了"; exit 1; }
+
+          # --no-ff --no-commit：先把合并结果放进索引，等 .github 归位了再提交
+          if ! git merge --no-ff --no-commit upstream/main; then
+            # 只容忍 .github 下的冲突；其他路径冲突说明有人改过同一处，交给人判断
+            if git diff --name-only --diff-filter=U | grep -qv '^\.github/'; then
+              echo "::error::与上游冲突（.github 之外），已中止合并。冲突文件："
+              git diff --name-only --diff-filter=U
+              git merge --abort
+              exit 1
+            fi
+          fi
+
+          # .github 一律用本分支的版本：上游改过的还原，上游新增的丢掉
+          git reset -q -- .github
+          git rm -rq --cached .github 2>/dev/null || true
+          rm -rf .github
+          git checkout HEAD -- .github
+          git add -A .github
+
+          # 上游这次若只改了 .github，归位后就没有任何改动了
+          if git diff --cached --quiet; then
+            git merge --abort || true
+            echo "上游这次只动了 .github，按配置不同步，结束"
+            exit 0
+          fi
+
+          git commit -q -m "chore: 同步上游 $(git rev-parse --short upstream/main)（.github 除外）"
+
+          # 不变量：同步提交相对上一提交，.github 不能有任何变化
+          git diff --quiet HEAD^ HEAD -- .github || { echo "::error::.github 被改动了"; exit 1; }
 
       - name: 推回 main
-        run: git push origin main
+        run: |
+          if out=$(git push origin main 2>&1); then
+            echo "$out"
+            exit 0
+          fi
+          echo "$out"
+          if ! printf '%s' "$out" | grep -q 'refusing to allow a GitHub App to create or update workflow'; then
+            echo "::error::推送失败，且不是 workflow 权限问题（见上面的输出）"
+            exit 1
+          fi
+          # 到这儿说明 GitHub 校验的是「区间内每个提交」，上游那几条改过 workflow 的提交
+          # 连累了整条推送（哪怕合并结果里 .github 没变）。压成单个提交重推即可绕过：
+          # 这次推送只有一条提交，且它的差异里不含 .github。代价是上游逐条历史不进 fork。
+          echo "::warning::按单提交方式重推（上游逐条历史本次不入 fork）"
+          git reset --soft origin/main
+          git commit -q -m "chore: 同步上游 $(git rev-parse --short upstream/main)（单提交，.github 除外）"
+          git push origin main
+
+# ── 想让上游的 workflow 也同步进来（纯镜像）怎么办 ──────────────────────────────
+# GITHUB_TOKEN 做不到，必须换成 PAT：
+#   1. github.com/settings/personal-access-tokens 新建 fine-grained token，仅授权本仓库，
+#      Repository permissions 里给 Contents: Read and write、Workflows: Read and write；
+#   2. 仓库 Settings → Secrets and variables → Actions 新建 secret，名字 SYNC_TOKEN；
+#   3. 上面 checkout 的 with 里加一行 token: ${{ secrets.SYNC_TOKEN }}；
+#   4. 删掉「合并上游（保留本仓库的 .github）」整段里从 git reset 到 git add 的四行，
+#      再把 test 那条不变量检查去掉，步骤名改回「合并上游」。
+# 换成 PAT 后，GITHUB_TOKEN 推的提交不触发 CI 这条特性会消失（PAT 推的会触发），
+# 届时注意 ci.yml 的 publish 任务会把镜像推到你的 GHCR。
