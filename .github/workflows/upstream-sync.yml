@@ -80,7 +80,7 @@ jobs:
             exit 0
           fi
 
-          git commit -q -m "chore: 同步上游 $(git rev-parse --short upstream/main)（.github 除外）"
+          git commit -q -m "chore: 同步上游 $(git rev-parse --short upstream/main)"
 
           # 不变量：同步提交相对上一提交，.github 不能有任何变化
           git diff --quiet HEAD^ HEAD -- .github || { echo "::error::.github 被改动了"; exit 1; }
@@ -101,7 +101,7 @@ jobs:
           # 这次推送只有一条提交，且它的差异里不含 .github。代价是上游逐条历史不进 fork。
           echo "::warning::按单提交方式重推（上游逐条历史本次不入 fork）"
           git reset --soft origin/main
-          git commit -q -m "chore: 同步上游 $(git rev-parse --short upstream/main)（单提交，.github 除外）"
+          git commit -q -m "chore: 同步上游 $(git rev-parse --short upstream/main)（单提交）"
           git push origin main
 
 # ── 想让上游的 workflow 也同步进来（纯镜像）怎么办 ──────────────────────────────
