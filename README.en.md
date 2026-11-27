@@ -264,7 +264,7 @@ npm run build && BACKEND_URL=http://localhost:8000 npm run start   # serves on :
 eidolon-sc/
 ├── backend/          # Python backend: FastAPI + Pipecat; conversation engine, calls, retrieval, memory, sync and the CLI (eidolon)
 │   ├── src/eidolon/
-│   ├── eval/         #   eval sets for reranking, the judge and memory (questions and labels only, no story text)
+│   ├── eval/         #   eval sets for retrieval, reranking, the judge and memory (questions and labels only, no story text)
 │   └── tests/
 ├── frontend/         # Next.js frontend: landing page, conversations, call screen, settings, admin console
 ├── characters/       # character config, character sheets, character facts, avatars, readings table, world setting
@@ -289,7 +289,7 @@ The license covers only the code and documentation in the repository. The follow
 
 ## 🙏 Acknowledgements
 
-- [LAPLACE Eidolon](https://laplace.live/eidolon): a real-time voice AI companion built for the VTuber Mingqian Nailü (明前奶绿); this project's architectural reference (none of its code is reused)
+- [LAPLACE Eidolon](https://github.com/laplace-live/eidolon) ([website](https://laplace.live/eidolon)): a real-time voice AI companion built for the VTuber Mingqian Nailü (明前奶绿); this project's architectural reference (none of its code is reused)
 - [LAPLACE Cycles](https://laplace.live/cycles): the reference for the Cycles page's estimates, with thanks for publishing how it works (none of its code is reused)
 - [SCTranslationData](https://github.com/ShinyGroup/SCTranslationData): story text and Chinese translations
 - [ShinyColorsDB](https://github.com/ShinyColorsDB): the mirror of the original scripts, and the stand assets
